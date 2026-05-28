@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vista PDF — Merge & Compress</title>
+<link rel="icon" type="image/png" href="assets/vista-v.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Manrope:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="brand">
+    <img src="assets/vista-v.png" alt="" class="brand-mark">
+    <div class="brand-text">
+      <div class="brand-name">VISTA <em class="brand-name-light">Compressor</em></div>
+      <div class="brand-tag">MERGE · COMPRESS · DONE</div>
+    </div>
+  </div>
+  <div class="header-meta">
+    <span class="meta-pill"><span class="meta-dot"></span>100% LOCAL · NOTHING UPLOADED</span>
+    <div class="wf-stamp-wrap">
+      <a class="wf-stamp" id="wfStamp" aria-label="WF mark of approval" tabindex="0">
+        <span class="wf-stamp-mark" aria-hidden="true"></span>
+      </a>
+      <div class="wf-popup" id="wfPopup" role="tooltip" aria-hidden="true">
+        <img src="assets/WF-portrait.gif" alt="William Floyd" class="wf-popup-img"
+             onerror="this.style.display='none'">
+        <div class="wf-popup-text"><em>WF</em> — Mark of Approval</div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+  <canvas id="bgGrid" class="bg-grid" aria-hidden="true"></canvas>
+  <div class="bg-grain" aria-hidden="true"></div>
+
+  <section class="hero hero-block" id="heroBlock">
+    <div class="hero-eyebrow">
+      <span class="eye-dot"></span>
+      <span>VISTA · INTERNAL TOOL · v1.0</span>
+    </div>
+    <h1 class="hero-title">
+      <span class="reveal-word" style="--d:0ms">Merge</span>
+      <span class="reveal-word" style="--d:60ms">your</span>
+      <span class="reveal-word" style="--d:120ms">PDFs.</span><br>
+      <span class="reveal-word accent-serif" style="--d:260ms"><em>Shrink</em></span>
+      <span class="reveal-word accent" style="--d:340ms">them</span>
+      <span class="reveal-word accent" style="--d:400ms">down.</span><br>
+      <span class="reveal-word" style="--d:560ms">Email</span>
+      <span class="reveal-word" style="--d:620ms">them</span>
+      <span class="reveal-word" style="--d:680ms">off.</span>
+    </h1>
+    <p class="hero-sub reveal-fade" style="--d:820ms">
+      Drop multiple PDFs, drag to reorder, then merge and compress — all inside your browser.
+      <span class="hero-sub-emphasis">Your files never leave this computer.</span>
+    </p>
+  </section>
+
+  <ol class="step-strip reveal-fade" id="stepStrip" style="--d:980ms">
+    <li class="step active" data-step="drop"><span class="step-num">01</span><span class="step-name">DROP PDFs</span></li>
+    <li class="step-line"></li>
+    <li class="step" data-step="rearrange"><span class="step-num">02</span><span class="step-name">REARRANGE</span></li>
+    <li class="step-line"></li>
+    <li class="step" data-step="edit"><span class="step-num">03</span><span class="step-name">EDIT PAGES</span></li>
+    <li class="step-line"></li>
+    <li class="step" data-step="compress"><span class="step-num">04</span><span class="step-name">COMPRESSION</span></li>
+    <li class="step-line"></li>
+    <li class="step" data-step="result"><span class="step-num">05</span><span class="step-name">SHIP IT</span></li>
+  </ol>
+
+  <div class="stages" id="stages">
+
+  <section class="stage is-active" data-stage="drop">
+  <div id="dropZone" class="drop-zone">
+    <input type="file" id="fileInput" accept="application/pdf" multiple hidden>
+    <div class="drop-aura"></div>
+    <div class="ghost-cards" aria-hidden="true">
+      <div class="ghost-card g1"></div>
+      <div class="ghost-card g2"></div>
+      <div class="ghost-card g3"></div>
+    </div>
+    <div class="drop-inner">
+      <div class="drop-icon">
+        <svg width="56" height="56" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M32 8 L32 40"/>
+          <path d="M20 28 L32 40 L44 28"/>
+          <path d="M12 48 L12 54 L52 54 L52 48"/>
+        </svg>
+      </div>
+      <div class="drop-headline">Drop PDFs <em>here</em></div>
+      <div class="drop-subline">or <button type="button" class="link-button" id="browseBtn">browse your files</button></div>
+      <div class="drop-hint">↓  one at a time or all at once  ↓</div>
+    </div>
+  </div>
+  </section>
+
+  <section class="stage" data-stage="rearrange">
+  <div id="fileStrip" class="file-strip">
+    <div class="strip-header">
+      <h2 class="strip-title">Your <em>queue</em><span class="title-period">.</span> <span class="strip-count" id="stripCount">0 files</span></h2>
+      <div class="strip-actions">
+        <button type="button" class="text-button" id="addMoreBtn">+ Add more</button>
+        <button type="button" class="text-button danger" id="clearAllBtn">Clear all</button>
+      </div>
+    </div>
+    <div class="strip-hint">Drag to reorder · Click × to remove</div>
+    <div class="strip-track" id="stripTrack"></div>
+  </div>
+  <div class="stage-action">
+    <button type="button" class="cta-button" id="continueToEditBtn">
+      <span class="cta-label">EDIT PAGES</span>
+      <span class="cta-arrow">→</span>
+    </button>
+  </div>
+  </section>
+
+  <section class="stage" data-stage="edit">
+    <div id="pageEditor" class="page-editor">
+      <div class="strip-header">
+        <h2 class="strip-title"><em>Delete</em> pages or <em>Add</em> pages<span class="title-period">.</span> <span class="strip-count" id="pageCount">0 pages</span></h2>
+        <div class="strip-actions">
+          <button type="button" class="pill-button" id="editUndoBtn" title="Undo (Ctrl+Z)" disabled>
+            <span class="pill-button-icon">↶</span>
+            <span>Undo</span>
+            <kbd>Ctrl+Z</kbd>
+          </button>
+          <button type="button" class="pill-button" id="editResetBtn" title="Restore everything to original state">
+            <span class="pill-button-icon">↺</span>
+            <span>Restore all</span>
+          </button>
+        </div>
+      </div>
+      <ul class="strip-hint-chips" aria-label="Edit page controls">
+        <li><span class="chip-key">Click</span><span class="chip-action">to preview</span></li>
+        <li><span class="chip-key">Drag</span><span class="chip-action">to reorder</span></li>
+        <li><span class="chip-key">×</span><span class="chip-action">to remove</span></li>
+        <li><span class="chip-key">Right-click</span><span class="chip-action">to add a PDF or image</span></li>
+        <li><span class="chip-key">Ctrl+Z</span><span class="chip-action">to undo</span></li>
+      </ul>
+      <div class="page-render-progress hidden" id="pageRenderProgress">
+        <span class="progress-label" id="pageRenderLabel">Rendering page 0 of 0…</span>
+        <div class="progress-bar"><div class="progress-fill" id="pageRenderFill"></div></div>
+      </div>
+      <div class="file-legend" id="fileLegend"></div>
+      <div class="page-grid" id="pageGrid"></div>
+    </div>
+    <div class="stage-action">
+      <button type="button" class="cta-button" id="continueToCompressBtn">
+        <span class="cta-label">CHOOSE COMPRESSION</span>
+        <span class="cta-arrow">→</span>
+      </button>
+    </div>
+  </section>
+
+  <section class="stage" data-stage="compress">
+  <div id="compressionPanel" class="compression-panel">
+    <h2 class="panel-title">Choose your <em>compression</em><span class="title-period">.</span></h2>
+    <div class="preset-grid">
+      <button type="button" class="preset" data-preset="low">
+        <div class="preset-label">LOW</div>
+        <div class="preset-name">Light Squeeze</div>
+        <div class="preset-desc">300 DPI images, near-original quality. Best for archive or print.</div>
+        <div class="preset-meta">~60% smaller</div>
+      </button>
+      <button type="button" class="preset selected" data-preset="recommended">
+        <div class="preset-label">RECOMMENDED</div>
+        <div class="preset-name">Email Ready</div>
+        <div class="preset-desc">110 DPI images, sharp text. Best balance for email and review.</div>
+        <div class="preset-meta">~80% smaller</div>
+      </button>
+      <button type="button" class="preset" data-preset="extreme">
+        <div class="preset-label">EXTREME</div>
+        <div class="preset-name">Max Crunch</div>
+        <div class="preset-desc">95 DPI images, smaller file but still legible. For screen sharing.</div>
+        <div class="preset-meta">~87% smaller</div>
+      </button>
+    </div>
+
+    <label class="searchable-toggle" for="searchableToggle">
+      <input type="checkbox" id="searchableToggle">
+      <span class="toggle-switch" aria-hidden="true"><span class="toggle-knob"></span></span>
+      <div class="toggle-text">
+        <span class="toggle-text-main">Make text <em>searchable</em></span>
+        <span class="toggle-text-sub">Adds OCR so scanned pages support Ctrl+F · ~1s per page · adds a small text-layer overhead (negligible on docs &gt; 1 MB)</span>
+      </div>
+    </label>
+
+    <button type="button" class="cta-button" id="processBtn">
+      <span class="cta-label">MERGE &amp; COMPRESS</span>
+      <span class="cta-arrow">→</span>
+    </button>
+  </div>
+  </section>
+
+  <section class="stage" data-stage="result">
+  <div id="resultPanel" class="result-panel">
+    <div class="result-icon">✓</div>
+    <h2 class="result-title">All <em>done</em><span class="title-period">.</span></h2>
+    <div class="searchable-badge hidden" id="searchableBadge">
+      <span class="searchable-badge-icon">✓</span>
+      <span>Searchable text included — <em>Ctrl+F now works</em></span>
+    </div>
+    <div class="result-stats">
+      <div class="stat">
+        <div class="stat-num" id="statBefore">—</div>
+        <div class="stat-label">Original</div>
+      </div>
+      <div class="stat-arrow">→</div>
+      <div class="stat">
+        <div class="stat-num" id="statAfter">—</div>
+        <div class="stat-label" id="statAfterLabel">Compressed</div>
+      </div>
+      <div class="stat-arrow" id="statDeltaArrow">=</div>
+      <div class="stat highlight">
+        <div class="stat-num" id="statSaved">—</div>
+        <div class="stat-label" id="statSavedLabel">Saved</div>
+      </div>
+    </div>
+    <div class="sankey-container" id="sankeyContainer" aria-label="File compression flow"></div>
+    <button type="button" class="cta-button" id="downloadBtn">
+      <span class="cta-label">DOWNLOAD PDF</span>
+      <span class="cta-arrow">↓</span>
+    </button>
+    <button type="button" class="text-button restart" id="restartBtn">Start over</button>
+  </div>
+  </section>
+
+  </div><!-- /.stages -->
+
+  <!-- Page zoom modal — click any page card to inspect it large -->
+  <div id="pageZoomModal" class="page-zoom-modal hidden" aria-hidden="true">
+    <div class="page-zoom-backdrop"></div>
+    <div class="page-zoom-card">
+      <button type="button" class="page-zoom-close" id="pageZoomCloseBtn" title="Close" aria-label="Close">×</button>
+      <div class="page-zoom-image" id="pageZoomImage">
+        <div class="page-zoom-skeleton">Rendering at full size…</div>
+      </div>
+      <div class="page-zoom-meta" id="pageZoomMeta"></div>
+      <div class="page-zoom-actions">
+        <button type="button" class="text-button danger" id="pageZoomRemoveBtn">× Remove this page</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right-click context menu for inserting pages -->
+  <div id="insertContextMenu" class="context-menu hidden" role="menu">
+    <button type="button" data-position="before">↑ Insert pages before</button>
+    <button type="button" data-position="after">↓ Insert pages after</button>
+  </div>
+
+  <input type="file" id="insertFileInput" accept="application/pdf,image/jpeg,image/png" multiple hidden>
+
+  <!-- Floating "keep scrolling" indicator — shows on long pages when more content is below the fold -->
+  <div id="scrollDownIndicator" class="scroll-down-indicator" aria-hidden="true">
+    <span>KEEP SCROLLING</span>
+    <span class="scroll-down-chevron">↓</span>
+  </div>
+
+  <div id="busyOverlay" class="busy-overlay hidden">
+    <div class="busy-card">
+      <div class="busy-spinner"></div>
+      <div class="busy-text" id="busyText">Working…</div>
+      <div class="busy-sub" id="busySub">This happens entirely in your browser.</div>
+      <div class="busy-progress hidden" id="busyProgress">
+        <div class="busy-progress-bar"><div class="busy-progress-fill" id="busyProgressFill"></div></div>
+        <div class="busy-progress-meta" id="busyProgressMeta"></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="counter">
+    <span class="counter-num" id="counterUses">0</span><span class="counter-label">uses</span>
+    <span class="counter-sep">·</span>
+    <span class="counter-num" id="counterFiles">0</span><span class="counter-label">files merged</span>
+    <span class="counter-sep">·</span>
+    <span class="counter-num" id="counterPages">0</span><span class="counter-label">pages crunched</span>
+  </div>
+  <div class="foot-note">
+    Built by Vista Site Selection <span class="foot-note-sep">·</span> <em class="foot-note-emphasis">Your files stay on this device</em>
+  </div>
+</footer>
+
+<script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+<script src="lib/fontkit.umd.min.js"></script>
+<script src="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script src="grid-bg.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

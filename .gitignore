@@ -1,0 +1,26 @@
+# Node tooling — these were only used for local Node-side regression testing,
+# not part of the deployed app.
+node_modules/
+package.json
+package-lock.json
+test_compression.mjs
+test_compression_tune.mjs
+test_full_flow.mjs
+test_ocr.mjs
+test_text_preservation.mjs
+test_text_roundtrip.mjs
+
+# Test data — Janie's confidential incorporation PDFs and our generated outputs.
+# Don't publish to GitHub.
+test_data/
+
+# Claude Code / dev-server config
+.claude/
+
+# OS junk
+.DS_Store
+Thumbs.db
+*.tmp
+
+# Stale Tesseract.js cache from Node-side tests (real one is in lib/tesseract/lang-data/)
+/eng.traineddata
