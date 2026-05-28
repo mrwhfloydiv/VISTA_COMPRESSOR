@@ -596,50 +596,131 @@ function removePage(id) {
   }
 }
 
-let pageDragSrcId = null;
+// Custom pointer-based drag for the page editor.
+// - The card visually "lifts" into your cursor (floating preview, slight tilt + shadow)
+// - The original slot fades to a muted phantom so you can see where it came from
+// - A hand-drawn red squiggle pulses in the grid gap showing exactly where it'll land
+let pageDragState = null;
+const PAGE_DRAG_THRESHOLD = 5;   // pixels of movement before drag actually starts
+
 function attachPageDragHandlers(card) {
-  card.addEventListener('dragstart', (e) => {
-    pageDragSrcId = Number(card.dataset.pageId);
-    card.classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', String(pageDragSrcId));
-  });
-  card.addEventListener('dragend', () => {
-    card.classList.remove('dragging');
-    pageGrid.querySelectorAll('.page-card').forEach(c =>
-      c.classList.remove('drop-before', 'drop-after')
-    );
-  });
-  card.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    if (Number(card.dataset.pageId) === pageDragSrcId) return;
+  card.draggable = false;        // we're handling it manually now — no native drag
+  card.addEventListener('pointerdown', (e) => {
+    // Left click only, and ignore the × button + zoom-on-click target
+    if (e.button !== 0) return;
+    if (e.target.closest('[data-page-remove]')) return;
     const rect = card.getBoundingClientRect();
-    const isBefore = e.clientX < rect.left + rect.width / 2;
-    card.classList.toggle('drop-before', isBefore);
-    card.classList.toggle('drop-after', !isBefore);
-  });
-  card.addEventListener('dragleave', () =>
-    card.classList.remove('drop-before', 'drop-after')
-  );
-  card.addEventListener('drop', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const isBefore = card.classList.contains('drop-before');
-    card.classList.remove('drop-before', 'drop-after');
-    const targetId = Number(card.dataset.pageId);
-    if (pageDragSrcId == null || targetId === pageDragSrcId) return;
-    const srcIdx = state.pages.findIndex(p => p.id === pageDragSrcId);
-    let tgtIdx = state.pages.findIndex(p => p.id === targetId);
-    if (srcIdx < 0 || tgtIdx < 0) return;
-    pushUndo();
-    const [moved] = state.pages.splice(srcIdx, 1);
-    if (srcIdx < tgtIdx) tgtIdx -= 1;
-    state.pages.splice(isBefore ? tgtIdx : tgtIdx + 1, 0, moved);
-    pageDragSrcId = null;
-    renderPageGrid();
+    pageDragState = {
+      sourceId: Number(card.dataset.pageId),
+      sourceCard: card,
+      startX: e.clientX,
+      startY: e.clientY,
+      offsetX: e.clientX - rect.left,
+      offsetY: e.clientY - rect.top,
+      cardW: rect.width,
+      started: false,
+      preview: null,
+      targetCard: null,
+      dropBefore: false,
+    };
   });
 }
+
+document.addEventListener('pointermove', (e) => {
+  const s = pageDragState;
+  if (!s) return;
+
+  // Don't start the drag until movement passes the threshold (so a quick
+  // click still opens the zoom modal cleanly).
+  if (!s.started) {
+    const dx = Math.abs(e.clientX - s.startX);
+    const dy = Math.abs(e.clientY - s.startY);
+    if (dx < PAGE_DRAG_THRESHOLD && dy < PAGE_DRAG_THRESHOLD) return;
+    s.started = true;
+    // Build the floating preview (clone of the source card)
+    const clone = s.sourceCard.cloneNode(true);
+    clone.classList.remove('dragging-source', 'drop-before', 'drop-after');
+    clone.classList.add('page-drag-preview');
+    clone.style.width = `${s.cardW}px`;
+    document.body.appendChild(clone);
+    s.preview = clone;
+    // Mute the source slot
+    s.sourceCard.classList.add('dragging-source');
+    // Use grabbing cursor across the whole document while dragging
+    document.body.style.cursor = 'grabbing';
+    e.target.setPointerCapture?.(e.pointerId);
+  }
+
+  // Move preview with the cursor
+  s.preview.style.left = `${e.clientX - s.offsetX}px`;
+  s.preview.style.top  = `${e.clientY - s.offsetY}px`;
+
+  // Hit-test which card the cursor is over (preview has pointer-events:none)
+  const below = document.elementFromPoint(e.clientX, e.clientY);
+  const target = below?.closest?.('.page-card');
+
+  // Clear previous indicators
+  pageGrid.querySelectorAll('.drop-before, .drop-after').forEach(c =>
+    c.classList.remove('drop-before', 'drop-after')
+  );
+
+  if (target && target !== s.sourceCard) {
+    const r = target.getBoundingClientRect();
+    const isBefore = e.clientX < r.left + r.width / 2;
+    target.classList.add(isBefore ? 'drop-before' : 'drop-after');
+    s.targetCard = target;
+    s.dropBefore = isBefore;
+  } else {
+    s.targetCard = null;
+  }
+});
+
+document.addEventListener('pointerup', (e) => {
+  const s = pageDragState;
+  if (!s) return;
+  pageDragState = null;
+
+  if (!s.started) return;   // it was just a click, not a drag
+
+  // Commit the reorder
+  if (s.targetCard) {
+    const targetId = Number(s.targetCard.dataset.pageId);
+    const srcIdx = state.pages.findIndex(p => p.id === s.sourceId);
+    let tgtIdx = state.pages.findIndex(p => p.id === targetId);
+    if (srcIdx >= 0 && tgtIdx >= 0 && targetId !== s.sourceId) {
+      pushUndo();
+      const [moved] = state.pages.splice(srcIdx, 1);
+      if (srcIdx < tgtIdx) tgtIdx -= 1;
+      state.pages.splice(s.dropBefore ? tgtIdx : tgtIdx + 1, 0, moved);
+    }
+  }
+
+  // Cleanup
+  s.preview?.remove();
+  s.sourceCard?.classList.remove('dragging-source');
+  pageGrid.querySelectorAll('.drop-before, .drop-after').forEach(c =>
+    c.classList.remove('drop-before', 'drop-after')
+  );
+  document.body.style.cursor = '';
+
+  // Re-render so order updates everywhere
+  renderPageGrid();
+});
+
+// Cancel drag if user presses Escape mid-flight
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !pageDragState) return;
+  const s = pageDragState;
+  pageDragState = null;
+  if (s.started) {
+    s.preview?.remove();
+    s.sourceCard?.classList.remove('dragging-source');
+    pageGrid.querySelectorAll('.drop-before, .drop-after').forEach(c =>
+      c.classList.remove('drop-before', 'drop-after')
+    );
+    document.body.style.cursor = '';
+  }
+});
 
 // ============================================================
 // PAGE ZOOM MODAL — click any card to inspect the page at full size
