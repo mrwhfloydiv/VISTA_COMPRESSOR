@@ -187,10 +187,19 @@
       <input type="checkbox" id="searchableToggle">
       <span class="toggle-switch" aria-hidden="true"><span class="toggle-knob"></span></span>
       <div class="toggle-text">
-        <span class="toggle-text-main">Make text <em>searchable</em></span>
-        <span class="toggle-text-sub">Adds OCR so scanned pages support Ctrl+F · ~1s per page · adds a small text-layer overhead (negligible on docs &gt; 1 MB)</span>
+        <span class="toggle-text-main">Make text <em>searchable</em> (OCR)</span>
+        <span class="toggle-text-sub">~1s per page · negligible size impact on docs &gt; 1 MB</span>
       </div>
     </label>
+    <details class="ocr-explainer">
+      <summary>What is OCR, and when do I need it?</summary>
+      <div class="ocr-explainer-body">
+        <p><strong>OCR stands for Optical Character Recognition.</strong> When a PDF is a <em>scan</em> (a picture of a document that came from a scanner or a phone camera), the text inside it is just pixels — your computer can't read it.</p>
+        <p>OCR <em>looks</em> at the picture, recognizes the letters and words, and adds an invisible text layer behind the image so you can <strong>search it with Ctrl+F</strong>, <strong>copy and paste from it</strong>, and screen readers can read it aloud.</p>
+        <p><strong>Turn this on when:</strong> the PDF is a scanned legal doc, contract, signed page, fax, or anything that came from a copier. If you can't already select text by clicking and dragging across the page, you need OCR.</p>
+        <p><strong>Leave it off when:</strong> the PDF was made digitally (Word export, Acrobat, designer's PDF) — it's already searchable, OCR would just waste time.</p>
+      </div>
+    </details>
 
     <button type="button" class="cta-button" id="processBtn">
       <span class="cta-label">MERGE &amp; COMPRESS</span>

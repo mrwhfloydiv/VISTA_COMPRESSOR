@@ -272,6 +272,8 @@ async function generateThumbnail(entry) {
     const ctx = canvas.getContext('2d');
     await page.render({ canvasContext: ctx, viewport }).promise;
     entry.thumbDataUrl = canvas.toDataURL('image/jpeg', 0.7);
+    // Remember orientation so the card can size the thumb-box correctly
+    entry.thumbAspect = viewport.width / viewport.height;
   } catch (err) {
     console.warn('Thumbnail generation failed:', err);
   }
@@ -296,10 +298,14 @@ function renderStrip() {
     const sizeStr = formatBytes(entry.size);
     const pagesStr = entry.pageCount != null ? `${entry.pageCount}p · ` : '';
 
+    // Adapt the thumbnail box to the page's actual aspect ratio (handles landscape PDFs)
+    const aspect = entry.thumbAspect && entry.thumbAspect > 0 ? entry.thumbAspect : 0.77;
+    const thumbStyle = `aspect-ratio:${aspect}; height:auto;`;
+
     card.innerHTML = `
       <div class="file-order">${i + 1}</div>
       <button type="button" class="file-remove" data-remove="${entry.id}" title="Remove">×</button>
-      <div class="file-thumb">${thumb}</div>
+      <div class="file-thumb" style="${thumbStyle}">${thumb}</div>
       <div class="file-meta">
         <div class="file-name" title="${escapeHtml(entry.name)}">${escapeHtml(entry.name)}</div>
         <div class="file-size">${pagesStr}${sizeStr}</div>
@@ -422,6 +428,12 @@ async function getPdfDoc(fileId) {
   return doc;
 }
 
+// Page-thumb aspect ratios captured during render so the cards lay out correctly
+// for landscape orientations.
+function pageCardAspect(pageEntry) {
+  return pageEntry?.aspect && pageEntry.aspect > 0 ? pageEntry.aspect : 0.77;
+}
+
 async function buildPagesForEdit() {
   state.pages = [];
   state.pagesBuilt = false;
@@ -476,13 +488,19 @@ async function buildPagesForEdit() {
         const ctx = canvas.getContext('2d');
         await pdfPage.render({ canvasContext: ctx, viewport }).promise;
         const dataUrl = canvas.toDataURL('image/jpeg', 0.65);
+        const aspect = viewport.width / viewport.height;
         const entry = state.pages.find(pg => pg.fileId === file.id && pg.originalIndex === p - 1);
         if (entry) {
           entry.thumbDataUrl = dataUrl;
+          entry.aspect = aspect;
           const card = pageGrid.querySelector(`[data-page-id="${entry.id}"]`);
           if (card) {
             const thumb = card.querySelector('.page-thumb');
-            if (thumb) thumb.innerHTML = `<img src="${dataUrl}" alt="">`;
+            if (thumb) {
+              thumb.innerHTML = `<img src="${dataUrl}" alt="">`;
+              thumb.style.aspectRatio = aspect;
+              thumb.style.height = 'auto';
+            }
           }
         }
       } catch (err) {
@@ -588,26 +606,36 @@ function attachPageDragHandlers(card) {
   });
   card.addEventListener('dragend', () => {
     card.classList.remove('dragging');
-    pageGrid.querySelectorAll('.page-card').forEach(c => c.classList.remove('drop-target'));
+    pageGrid.querySelectorAll('.page-card').forEach(c =>
+      c.classList.remove('drop-before', 'drop-after')
+    );
   });
   card.addEventListener('dragover', (e) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-    if (Number(card.dataset.pageId) !== pageDragSrcId) card.classList.add('drop-target');
+    if (Number(card.dataset.pageId) === pageDragSrcId) return;
+    const rect = card.getBoundingClientRect();
+    const isBefore = e.clientX < rect.left + rect.width / 2;
+    card.classList.toggle('drop-before', isBefore);
+    card.classList.toggle('drop-after', !isBefore);
   });
-  card.addEventListener('dragleave', () => card.classList.remove('drop-target'));
+  card.addEventListener('dragleave', () =>
+    card.classList.remove('drop-before', 'drop-after')
+  );
   card.addEventListener('drop', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    card.classList.remove('drop-target');
+    const isBefore = card.classList.contains('drop-before');
+    card.classList.remove('drop-before', 'drop-after');
     const targetId = Number(card.dataset.pageId);
     if (pageDragSrcId == null || targetId === pageDragSrcId) return;
     const srcIdx = state.pages.findIndex(p => p.id === pageDragSrcId);
-    const tgtIdx = state.pages.findIndex(p => p.id === targetId);
+    let tgtIdx = state.pages.findIndex(p => p.id === targetId);
     if (srcIdx < 0 || tgtIdx < 0) return;
-    pushUndo();   // snapshot before reorder so undo restores the prior order
+    pushUndo();
     const [moved] = state.pages.splice(srcIdx, 1);
-    state.pages.splice(tgtIdx, 0, moved);
+    if (srcIdx < tgtIdx) tgtIdx -= 1;
+    state.pages.splice(isBefore ? tgtIdx : tgtIdx + 1, 0, moved);
     pageDragSrcId = null;
     renderPageGrid();
   });
@@ -834,31 +862,43 @@ function attachDragHandlers(card) {
     dragSrcId = Number(card.dataset.id);
     card.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
-    // Some browsers need data to start drag
     e.dataTransfer.setData('text/plain', String(dragSrcId));
   });
   card.addEventListener('dragend', () => {
     card.classList.remove('dragging');
-    stripTrack.querySelectorAll('.file-card').forEach(c => c.classList.remove('drop-target'));
+    stripTrack.querySelectorAll('.file-card').forEach(c =>
+      c.classList.remove('drop-before', 'drop-after')
+    );
   });
   card.addEventListener('dragover', (e) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-    if (Number(card.dataset.id) !== dragSrcId) card.classList.add('drop-target');
+    if (Number(card.dataset.id) === dragSrcId) return;
+    // Determine left-of-target vs right-of-target based on cursor x
+    const rect = card.getBoundingClientRect();
+    const isBefore = e.clientX < rect.left + rect.width / 2;
+    card.classList.toggle('drop-before', isBefore);
+    card.classList.toggle('drop-after', !isBefore);
   });
-  card.addEventListener('dragleave', () => card.classList.remove('drop-target'));
+  card.addEventListener('dragleave', () =>
+    card.classList.remove('drop-before', 'drop-after')
+  );
   card.addEventListener('drop', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    card.classList.remove('drop-target');
+    const isBefore = card.classList.contains('drop-before');
+    card.classList.remove('drop-before', 'drop-after');
     const targetId = Number(card.dataset.id);
     if (dragSrcId == null || targetId === dragSrcId) return;
     const srcIdx = state.files.findIndex(f => f.id === dragSrcId);
-    const tgtIdx = state.files.findIndex(f => f.id === targetId);
+    let tgtIdx = state.files.findIndex(f => f.id === targetId);
     if (srcIdx < 0 || tgtIdx < 0) return;
+    // After removing src, the target index may shift if src was before it
     const [moved] = state.files.splice(srcIdx, 1);
-    state.files.splice(tgtIdx, 0, moved);
+    if (srcIdx < tgtIdx) tgtIdx -= 1;
+    state.files.splice(isBefore ? tgtIdx : tgtIdx + 1, 0, moved);
     dragSrcId = null;
+    state.pagesBuilt = false; state.pages = [];   // page list is stale if file order changed
     renderStrip();
   });
 }
@@ -1092,6 +1132,15 @@ async function compressPdf(bytes, preset, onProgress) {
   const output = gs.FS.readFile('/output.pdf');
   // Free the input file from the WASM heap
   try { gs.FS.unlink('/input.pdf'); gs.FS.unlink('/output.pdf'); } catch {}
+
+  // SAFETY NET: if Ghostscript made the file LARGER (happens with already-
+  // optimized scans where re-encoding a low-quality JPEG at our settings
+  // ADDS artifacts), keep the original instead. The user wanted "compressed",
+  // never "bigger than what they had."
+  if (output.byteLength > input.byteLength) {
+    console.log(`Compression would grow file (${output.byteLength} > ${input.byteLength}) — keeping original`);
+    return input;
+  }
   return output;
 }
 
@@ -1453,10 +1502,15 @@ function renderSankey(files, mergedBytes, finalBytes) {
   };
 
   // ---- Flow paths: each input → contiguous slice of merged ----
+  // Input-side width = the actual bar height (which may have been min-padded).
+  // Merged-side width = the file's proportional share of mergedBytes, so the
+  // sum of ribbon ends matches mergedH exactly. Ribbons taper between the two.
   let mFlowY = mergedY;
-  const inputFlows = inputBars.map(b => {
-    const path = makeFlowPath(b.x + b.w, b.y, b.h, midX, mFlowY, b.h);
-    mFlowY += b.h;
+  const inputFlows = inputBars.map((b, i) => {
+    const file = files[i];
+    const mergedSideH = (file.size / inputsTotal) * mergedH;
+    const path = makeFlowPath(b.x + b.w, b.y, b.h, midX, mFlowY, mergedSideH);
+    mFlowY += mergedSideH;
     return path;
   });
 

@@ -936,8 +936,34 @@ main {
   transform: translateY(-3px);
   box-shadow: var(--shadow-md);
 }
-.file-card.dragging { opacity: 0.4; transform: scale(0.96); cursor: grabbing; }
-.file-card.drop-target { border-color: var(--vista-red); border-style: dashed; }
+.file-card.dragging {
+  opacity: 0.25;
+  transform: scale(0.94);
+  cursor: grabbing;
+  border-style: dashed;
+  border-color: var(--vista-red);
+  background: rgba(178, 44, 46, 0.04);
+}
+/* Drop indicators — a red bar shows EXACTLY where the dragged card will land */
+.file-card.drop-before::before,
+.file-card.drop-after::after {
+  content: '';
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 4px;
+  background: var(--vista-red);
+  border-radius: 3px;
+  box-shadow: 0 0 0 2px rgba(178, 44, 46, 0.2);
+  z-index: 10;
+  animation: dropPulse 0.9s ease-in-out infinite;
+}
+.file-card.drop-before::before { left: -10px; }
+.file-card.drop-after::after  { right: -10px; }
+@keyframes dropPulse {
+  0%, 100% { opacity: 0.8; }
+  50%      { opacity: 1; }
+}
 
 .file-thumb {
   width: 100%;
@@ -1129,8 +1155,30 @@ main {
   transform: translateY(-2px);
   box-shadow: var(--shadow-md);
 }
-.page-card.dragging { opacity: 0.4; transform: scale(0.96); cursor: grabbing; }
-.page-card.drop-target { border-color: var(--vista-red); border-style: dashed; }
+.page-card.dragging {
+  opacity: 0.25;
+  transform: scale(0.94);
+  cursor: grabbing;
+  border-style: dashed;
+  border-color: var(--vista-red);
+  background: rgba(178, 44, 46, 0.05);
+}
+/* Same drop-position indicators on page cards */
+.page-card.drop-before::before,
+.page-card.drop-after::after {
+  content: '';
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 4px;
+  background: var(--vista-red);
+  border-radius: 3px;
+  box-shadow: 0 0 0 2px rgba(178, 44, 46, 0.22);
+  z-index: 10;
+  animation: dropPulse 0.9s ease-in-out infinite;
+}
+.page-card.drop-before::before { left: -10px; }
+.page-card.drop-after::after  { right: -10px; }
 .page-card.removing {
   animation: pageCardOut 240ms ease-in forwards;
   pointer-events: none;
@@ -1582,6 +1630,59 @@ main {
   font-size: 11px;
   color: var(--ink-soft);
   letter-spacing: 0.04em;
+}
+
+/* Collapsible explainer: "What is OCR, and when do I need it?" */
+.ocr-explainer {
+  margin: -18px 0 28px;     /* tuck up close under the toggle */
+}
+.ocr-explainer summary {
+  cursor: pointer;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: color var(--t), background var(--t);
+}
+.ocr-explainer summary::-webkit-details-marker { display: none; }
+.ocr-explainer summary::before {
+  content: '＋';
+  display: inline-block;
+  font-size: 13px;
+  transition: transform var(--t);
+}
+.ocr-explainer[open] summary::before {
+  transform: rotate(45deg);
+}
+.ocr-explainer summary:hover {
+  color: var(--vista-red);
+}
+.ocr-explainer-body {
+  padding: 14px 18px 18px;
+  background: var(--paper);
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  margin-top: 8px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+.ocr-explainer-body p { margin: 0 0 12px; }
+.ocr-explainer-body p:last-child { margin-bottom: 0; }
+.ocr-explainer-body strong { color: var(--ink); }
+.ocr-explainer-body em {
+  font-family: 'Instrument Serif', 'Times New Roman', serif;
+  font-style: italic;
+  font-weight: 400;
+  color: var(--vista-red);
+  font-size: 1.1em;
 }
 
 /* ============ CTA BUTTON ============ */
