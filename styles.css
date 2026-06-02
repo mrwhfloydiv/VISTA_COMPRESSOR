@@ -1376,6 +1376,60 @@ main {
   border-color: var(--vista-red);
   transform: scale(1.05);
 }
+
+/* Prev / next arrows on either side of the zoom card */
+.page-zoom-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 36px;
+  font-weight: 600;
+  line-height: 1;
+  background: white;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--t);
+  z-index: 2;
+  box-shadow: var(--shadow-md);
+  animation: zoomNavIn 320ms cubic-bezier(.22,.61,.36,1) both;
+  animation-delay: 220ms;
+}
+.page-zoom-nav.prev { left: 24px; padding-right: 4px; }
+.page-zoom-nav.next { right: 24px; padding-left: 4px; }
+.page-zoom-nav:hover:not([disabled]) {
+  background: var(--vista-red);
+  color: white;
+  border-color: var(--vista-red);
+  transform: translateY(-50%) scale(1.06);
+  box-shadow: 0 14px 40px rgba(178, 44, 46, 0.32), var(--shadow-md);
+}
+.page-zoom-nav:active:not([disabled]) {
+  transform: translateY(-50%) scale(0.98);
+}
+.page-zoom-nav[disabled] {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+@keyframes zoomNavIn {
+  from { opacity: 0; transform: translateY(-50%) scale(0.85); }
+  to   { opacity: 1; transform: translateY(-50%) scale(1); }
+}
+
+/* Tighter spacing on smaller viewports so arrows don't crowd the card */
+@media (max-width: 900px) {
+  .page-zoom-nav { width: 44px; height: 44px; font-size: 28px; }
+  .page-zoom-nav.prev { left: 8px; }
+  .page-zoom-nav.next { right: 8px; }
+}
 .page-zoom-image {
   flex: 1;
   min-height: 400px;

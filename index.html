@@ -246,6 +246,7 @@
   <!-- Page zoom modal — click any page card to inspect it large -->
   <div id="pageZoomModal" class="page-zoom-modal hidden" aria-hidden="true">
     <div class="page-zoom-backdrop"></div>
+    <button type="button" class="page-zoom-nav prev" id="pageZoomPrevBtn" title="Previous page (←)" aria-label="Previous page">‹</button>
     <div class="page-zoom-card">
       <button type="button" class="page-zoom-close" id="pageZoomCloseBtn" title="Close" aria-label="Close">×</button>
       <div class="page-zoom-image" id="pageZoomImage">
@@ -256,6 +257,7 @@
         <button type="button" class="text-button danger" id="pageZoomRemoveBtn">× Remove this page</button>
       </div>
     </div>
+    <button type="button" class="page-zoom-nav next" id="pageZoomNextBtn" title="Next page (→)" aria-label="Next page">›</button>
   </div>
 
   <!-- Right-click context menu for inserting pages -->

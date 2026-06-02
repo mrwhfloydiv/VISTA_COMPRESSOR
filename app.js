@@ -72,6 +72,8 @@ const pageZoomImage = $('pageZoomImage');
 const pageZoomMeta = $('pageZoomMeta');
 const pageZoomCloseBtn = $('pageZoomCloseBtn');
 const pageZoomRemoveBtn = $('pageZoomRemoveBtn');
+const pageZoomPrevBtn = $('pageZoomPrevBtn');
+const pageZoomNextBtn = $('pageZoomNextBtn');
 const insertContextMenu = $('insertContextMenu');
 const insertFileInput = $('insertFileInput');
 const heroBlock = $('heroBlock');
@@ -727,19 +729,28 @@ document.addEventListener('keydown', (e) => {
 // ============================================================
 
 let currentZoomPageId = null;
+let zoomRenderToken = 0;   // monotonic counter — discards stale renders on rapid navigation
 
-async function openPageZoom(pageId) {
+// Render the modal contents for one page. Called both on initial open
+// and on every prev/next navigation. Uses a token to abort stale renders
+// when the user clicks through pages faster than they can render.
+async function renderZoomForPage(pageId) {
   const page = state.pages.find(p => p.id === pageId);
   if (!page) return;
   currentZoomPageId = pageId;
+  const token = ++zoomRenderToken;
 
+  // Update meta + nav button enable states immediately
   pageZoomMeta.innerHTML = `
     <span class="zoom-color-dot" style="background:${page.color}"></span>
     <span class="zoom-meta-name">${escapeHtml(page.fileName)}</span>
     <span class="zoom-meta-pageinfo">PAGE ${page.pageNum}</span>
   `;
+  const idx = state.pages.findIndex(p => p.id === pageId);
+  pageZoomPrevBtn.toggleAttribute('disabled', idx <= 0);
+  pageZoomNextBtn.toggleAttribute('disabled', idx >= state.pages.length - 1);
+
   pageZoomImage.innerHTML = '<div class="page-zoom-skeleton">Rendering at full size…</div>';
-  pageZoomModal.classList.remove('hidden');
 
   try {
     const pdf = await getPdfDoc(page.fileId);
@@ -751,22 +762,43 @@ async function openPageZoom(pageId) {
     canvas.height = viewport.height;
     const ctx = canvas.getContext('2d');
     await pdfPage.render({ canvasContext: ctx, viewport }).promise;
-    if (currentZoomPageId !== pageId) return;  // user closed while rendering
+    if (token !== zoomRenderToken) return;  // user navigated away / closed
     pageZoomImage.innerHTML = `<img src="${canvas.toDataURL('image/jpeg', 0.85)}" alt="">`;
   } catch (err) {
+    if (token !== zoomRenderToken) return;
     pageZoomImage.innerHTML = `<div class="page-zoom-skeleton">Could not render: ${escapeHtml(err.message)}</div>`;
   }
+}
+
+async function openPageZoom(pageId) {
+  pageZoomModal.classList.remove('hidden');
+  await renderZoomForPage(pageId);
+}
+
+function navigateZoom(direction) {
+  if (currentZoomPageId == null) return;
+  const idx = state.pages.findIndex(p => p.id === currentZoomPageId);
+  if (idx < 0) return;
+  const next = idx + direction;
+  if (next < 0 || next >= state.pages.length) return;
+  renderZoomForPage(state.pages[next].id);
 }
 
 function closePageZoom() {
   pageZoomModal.classList.add('hidden');
   currentZoomPageId = null;
+  zoomRenderToken++;   // cancel any in-flight render
 }
 
 pageZoomCloseBtn.addEventListener('click', closePageZoom);
+pageZoomPrevBtn.addEventListener('click', () => navigateZoom(-1));
+pageZoomNextBtn.addEventListener('click', () => navigateZoom(+1));
 pageZoomModal.querySelector('.page-zoom-backdrop').addEventListener('click', closePageZoom);
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !pageZoomModal.classList.contains('hidden')) closePageZoom();
+  if (pageZoomModal.classList.contains('hidden')) return;
+  if (e.key === 'Escape') { closePageZoom(); return; }
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); navigateZoom(-1); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); navigateZoom(+1); }
 });
 pageZoomRemoveBtn.addEventListener('click', () => {
   if (currentZoomPageId == null) return;
