@@ -58,13 +58,13 @@
       <span class="reveal-word" style="--d:680ms">off.</span>
     </h1>
     <p class="hero-sub reveal-fade" style="--d:820ms">
-      Drop multiple PDFs, drag to reorder, then merge and compress — all inside your browser.
+      Drop PDFs, Word docs, images or text — drag to reorder, then merge and compress, all inside your browser.
       <span class="hero-sub-emphasis">Your files never leave this computer.</span>
     </p>
   </section>
 
   <ol class="step-strip reveal-fade" id="stepStrip" style="--d:980ms">
-    <li class="step active" data-step="drop"><span class="step-num">01</span><span class="step-name">DROP PDFs</span></li>
+    <li class="step active" data-step="drop"><span class="step-num">01</span><span class="step-name">DROP FILES</span></li>
     <li class="step-line"></li>
     <li class="step" data-step="rearrange"><span class="step-num">02</span><span class="step-name">REARRANGE</span></li>
     <li class="step-line"></li>
@@ -79,7 +79,7 @@
 
   <section class="stage is-active" data-stage="drop">
   <div id="dropZone" class="drop-zone">
-    <input type="file" id="fileInput" accept="application/pdf" multiple hidden>
+    <input type="file" id="fileInput" accept="application/pdf,image/*,.txt,.md,.markdown,.csv,.tsv,.log,.docx,.pptx" multiple hidden>
     <div class="drop-aura"></div>
     <div class="ghost-cards" aria-hidden="true">
       <div class="ghost-card g1"></div>
@@ -94,9 +94,9 @@
           <path d="M12 48 L12 54 L52 54 L52 48"/>
         </svg>
       </div>
-      <div class="drop-headline">Drop PDFs <em>here</em></div>
+      <div class="drop-headline">Drop files <em>here</em></div>
       <div class="drop-subline">or <button type="button" class="link-button" id="browseBtn">browse your files</button></div>
-      <div class="drop-hint">↓  one at a time or all at once  ↓</div>
+      <div class="drop-hint">PDF · Word · images · text — mix &amp; match</div>
     </div>
   </div>
   </section>
@@ -266,7 +266,7 @@
     <button type="button" data-position="after">↓ Insert pages after</button>
   </div>
 
-  <input type="file" id="insertFileInput" accept="application/pdf,image/jpeg,image/png" multiple hidden>
+  <input type="file" id="insertFileInput" accept="application/pdf,image/*,.txt,.md,.markdown,.csv,.tsv,.log,.docx,.pptx" multiple hidden>
 
   <!-- Floating "keep scrolling" indicator — shows on long pages when more content is below the fold -->
   <div id="scrollDownIndicator" class="scroll-down-indicator" aria-hidden="true">

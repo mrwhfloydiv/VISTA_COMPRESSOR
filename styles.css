@@ -2242,3 +2242,37 @@ main {
   .drop-zone { padding: 48px 20px; }
   .site-footer { padding: 18px 22px; flex-direction: column; align-items: flex-start; }
 }
+
+/* ============================================================
+   TOAST — non-blocking notices (skipped / failed conversions)
+   ============================================================ */
+.vista-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translate(-50%, 24px);
+  z-index: 9999;
+  max-width: min(560px, calc(100vw - 40px));
+  padding: 14px 18px;
+  border-radius: 12px;
+  background: var(--vista-black);
+  color: var(--vista-white);
+  font-family: 'Manrope', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  white-space: pre-wrap;          /* keep \n line breaks in multi-file messages */
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+  border-left: 4px solid var(--vista-red);
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.vista-toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  pointer-events: auto;
+}
+.vista-toast.warn  { border-left-color: var(--vista-yellow); }
+.vista-toast.error { border-left-color: var(--vista-red); }
+.vista-toast.info  { border-left-color: var(--vista-blue); }

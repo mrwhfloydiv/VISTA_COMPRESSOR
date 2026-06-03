@@ -216,9 +216,9 @@ fileInput.addEventListener('change', (e) => {
   });
 });
 dropZone.addEventListener('drop', (e) => {
-  const files = Array.from(e.dataTransfer?.files || [])
-    .filter(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
-  ingestFiles(files);
+  // Accept everything dropped; ingestFiles classifies, converts, and reports
+  // anything it can't handle.
+  ingestFiles(Array.from(e.dataTransfer?.files || []));
 });
 
 // Also let the user drop files anywhere on the page once at least one is queued
@@ -231,20 +231,42 @@ dropZone.addEventListener('drop', (e) => {
 
 async function ingestFiles(files) {
   if (!files.length) return;
+  const errors = [];
+  let added = 0;
   showBusy('Reading files…', 'Generating previews for your queue.');
-  for (const file of files) {
-    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) continue;
+
+  for (const original of files) {
+    const kind = classifyFile(original);
+    if (kind === 'unknown') {
+      errors.push(`${original.name} — unsupported file type`);
+      continue;
+    }
+    // Convert anything that isn't already a PDF into one, client-side.
+    let pdfFile = original;
+    if (kind !== 'pdf') {
+      showBusy(`Converting ${original.name}…`, `Turning your ${kindLabel(kind)} into PDF pages.`);
+      try {
+        pdfFile = await anyFileToPdfFile(original);
+      } catch (err) {
+        console.warn('Conversion failed:', original.name, err);
+        errors.push(`${original.name} — ${err.message || 'could not be converted'}`);
+        continue;
+      }
+    }
+
     const fileIndex = state.files.length;
     const entry = {
       id: nextId++,
-      file,
-      name: file.name,
-      size: file.size,
+      file: pdfFile,
+      name: original.name,                 // show the name the user recognizes
+      size: pdfFile.size,
+      origKind: kind,                      // 'pdf' | 'image' | 'text' | 'docx' | 'pptx'
       thumbDataUrl: null,
       pageCount: null,
       color: colorForIndex(fileIndex),    // stripe color for the page editor
     };
     state.files.push(entry);
+    added++;
     // Files changed → existing page list is stale; rebuild on next EDIT visit
     state.pagesBuilt = false;
     // Render placeholder card immediately
@@ -254,6 +276,14 @@ async function ingestFiles(files) {
   }
   hideBusy();
   renderStrip();
+
+  if (errors.length) {
+    showToast(
+      (added ? `Added ${added} file${added === 1 ? '' : 's'}. ` : '') +
+      `Couldn't add ${errors.length}:\n• ${errors.join('\n• ')}`,
+      added ? 'warn' : 'error'
+    );
+  }
   // Advance to REARRANGE the first time files come in (or stay there)
   if (state.files.length > 0 && currentStage === 'drop') {
     goToStage('rearrange');
@@ -854,37 +884,304 @@ insertFileInput.addEventListener('change', async (e) => {
   await insertPagesFromFiles(files, insertTargetPageId, insertPosition);
 });
 
-// Wrap an image file (jpg/png) into a single-page Letter-sized PDF so it can
-// flow through the same page-editor + merge pipeline as the other PDFs.
+// ============================================================
+// UNIVERSAL FILE → PDF CONVERSION
+// Everything the user drops becomes a PDF File before it enters the
+// merge + compress pipeline, so the rest of the app only ever sees PDFs.
+// All conversion happens client-side — files never leave the browser.
+// ============================================================
+
+const PAGE_W = 612, PAGE_H = 792;   // US Letter, in points
+
+// What kind of file is this? Drives which converter we use.
+function classifyFile(file) {
+  const name = (file.name || '').toLowerCase();
+  const type = file.type || '';
+  if (type === 'application/pdf' || name.endsWith('.pdf')) return 'pdf';
+  if (type.startsWith('image/') || /\.(jpe?g|png|gif|bmp|webp)$/.test(name)) return 'image';
+  if (name.endsWith('.docx') ||
+      type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') return 'docx';
+  if (name.endsWith('.pptx') ||
+      type === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') return 'pptx';
+  // Treat anything texty (txt/md/csv/log/json/etc.) as plain text
+  if (type.startsWith('text/') || /\.(txt|md|markdown|csv|tsv|log|json)$/.test(name)) return 'text';
+  return 'unknown';
+}
+
+// Human label for the busy overlay + error messages
+function kindLabel(kind) {
+  return {
+    pdf: 'PDF', image: 'image', text: 'text document',
+    docx: 'Word document', pptx: 'PowerPoint',
+  }[kind] || 'file';
+}
+
+// Strip the extension and append .pdf so output names stay clean.
+function toPdfName(originalName) {
+  return originalName.replace(/\.[^.]+$/, '') + '.pdf';
+}
+
+// Lazy-load a CDN script exactly once. Conversion libs (mammoth, html2canvas)
+// are only pulled in the first time someone actually drops that file type, so
+// PDF-only users never pay for them.
+const _scriptPromises = new Map();
+function loadScriptOnce(url) {
+  if (_scriptPromises.has(url)) return _scriptPromises.get(url);
+  const p = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = url;
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('Could not load ' + url));
+    document.head.appendChild(s);
+  });
+  _scriptPromises.set(url, p);
+  return p;
+}
+
+// A dataURL like "data:image/png;base64,..." → raw bytes for pdf-lib embedding.
+function dataUrlToBytes(dataUrl) {
+  const base64 = dataUrl.split(',')[1];
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+// ---- Master dispatcher ------------------------------------------------------
+// Returns a PDF File, or throws with a user-friendly message.
+async function anyFileToPdfFile(file) {
+  switch (classifyFile(file)) {
+    case 'pdf':   return file;
+    case 'image': return imageFileToPdfFile(file);
+    case 'text':  return textFileToPdfFile(file);
+    case 'docx':  return docxFileToPdfFile(file);
+    case 'pptx':  return pptxFileToPdfFile(file);
+    default:
+      throw new Error(`"${file.name}" isn't a supported file type.`);
+  }
+}
+
+// ---- Images (jpg/png/gif/bmp/webp) -----------------------------------------
+// Wrap an image into a single-page Letter PDF, centered and fit-to-page.
 async function imageFileToPdfFile(imgFile) {
   const bytes = await imgFile.arrayBuffer();
   const doc = await PDFDocument.create();
   const name = imgFile.name.toLowerCase();
   let img;
-  if (imgFile.type === 'image/jpeg' || /\.jpe?g$/.test(name)) {
-    img = await doc.embedJpg(bytes);
-  } else if (imgFile.type === 'image/png' || /\.png$/.test(name)) {
-    img = await doc.embedPng(bytes);
-  } else {
-    throw new Error('Unsupported image type: ' + (imgFile.type || imgFile.name));
+  try {
+    if (imgFile.type === 'image/jpeg' || /\.jpe?g$/.test(name)) {
+      img = await doc.embedJpg(bytes);               // embed JPG directly (no re-encode)
+    } else if (imgFile.type === 'image/png' || /\.png$/.test(name)) {
+      img = await doc.embedPng(bytes);               // embed PNG directly
+    } else {
+      // gif / bmp / webp / anything else the browser can decode: rasterize to PNG
+      const pngBytes = await rasterizeImageToPng(imgFile);
+      img = await doc.embedPng(pngBytes);
+    }
+  } catch (err) {
+    // Try a last-resort canvas decode (handles mislabeled extensions); else fail clean.
+    try {
+      const pngBytes = await rasterizeImageToPng(imgFile);
+      img = await doc.embedPng(pngBytes);
+    } catch {
+      throw new Error('this image looks corrupted or its contents don’t match its file type');
+    }
   }
-  // US Letter, image fit-to-page with a small margin, preserving aspect ratio
-  const PAGE_W = 612, PAGE_H = 792, margin = 36;
+  const margin = 36;
   const maxW = PAGE_W - margin * 2;
   const maxH = PAGE_H - margin * 2;
-  const ratio = Math.min(maxW / img.width, maxH / img.height);
+  const ratio = Math.min(maxW / img.width, maxH / img.height, 1);
   const w = img.width * ratio;
   const h = img.height * ratio;
   const page = doc.addPage([PAGE_W, PAGE_H]);
-  page.drawImage(img, {
-    x: (PAGE_W - w) / 2,
-    y: (PAGE_H - h) / 2,
-    width: w, height: h,
-  });
+  page.drawImage(img, { x: (PAGE_W - w) / 2, y: (PAGE_H - h) / 2, width: w, height: h });
   const pdfBytes = await doc.save();
-  // Preserve original filename but switch extension to indicate the wrap
-  const baseName = imgFile.name.replace(/\.[^.]+$/, '');
-  return new File([pdfBytes], `${baseName} (image).pdf`, { type: 'application/pdf' });
+  return new File([pdfBytes], toPdfName(imgFile.name), { type: 'application/pdf' });
+}
+
+// Decode any browser-supported image and re-encode as PNG bytes.
+async function rasterizeImageToPng(imgFile) {
+  const url = URL.createObjectURL(imgFile);
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('Could not decode image: ' + imgFile.name));
+      el.src = url;
+    });
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth || img.width;
+    canvas.height = img.naturalHeight || img.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    return dataUrlToBytes(canvas.toDataURL('image/png'));
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// ---- Plain text (txt/md/csv/log/…) -----------------------------------------
+// Lay text onto Letter pages with word-wrap + pagination using a standard font.
+async function textFileToPdfFile(txtFile) {
+  let text = await txtFile.text();
+  text = text.replace(/\r\n?/g, '\n').replace(/\t/g, '    ');
+  const doc = await PDFDocument.create();
+  // Embed Noto Sans (unicode-capable) so smart quotes, em-dashes, accents, €, •
+  // etc. survive — the built-in Helvetica throws on anything outside WinAnsi.
+  // Fall back to Helvetica only if the font can't be loaded.
+  let font;
+  try {
+    const notoBytes = await ensureNotoBytes();
+    if (window.fontkit) doc.registerFontkit(window.fontkit);
+    font = await doc.embedFont(notoBytes, { subset: true });
+  } catch (err) {
+    console.warn('Noto load failed, falling back to Helvetica:', err);
+    font = await doc.embedFont(StandardFonts.Helvetica);
+    // Strip characters Helvetica (WinAnsi) can't encode so we never crash.
+    text = text.replace(/[^\x00-\xFF]/g, '?');
+  }
+  const fontSize = 11, lineHeight = 15, margin = 54;
+  const maxWidth = PAGE_W - margin * 2;
+
+  // Word-wrap one logical line into rendered lines that fit maxWidth.
+  const wrapLine = (line) => {
+    if (line === '') return [''];
+    const out = [];
+    let cur = '';
+    for (const word of line.split(/(\s+)/)) {   // keep whitespace tokens
+      const trial = cur + word;
+      if (font.widthOfTextAtSize(trial, fontSize) <= maxWidth) {
+        cur = trial;
+      } else {
+        if (cur) out.push(cur);
+        // Hard-break a single token longer than the page width
+        if (font.widthOfTextAtSize(word, fontSize) > maxWidth) {
+          let chunk = '';
+          for (const ch of word) {
+            if (font.widthOfTextAtSize(chunk + ch, fontSize) <= maxWidth) {
+              chunk += ch;
+            } else { out.push(chunk); chunk = ch; }
+          }
+          cur = chunk;
+        } else {
+          cur = word.replace(/^\s+/, '');   // don't start a line with the wrapped space
+        }
+      }
+    }
+    if (cur) out.push(cur);
+    return out.length ? out : [''];
+  };
+
+  const lines = text.split('\n').flatMap(wrapLine);
+  let page = doc.addPage([PAGE_W, PAGE_H]);
+  let y = PAGE_H - margin;
+  for (const line of lines) {
+    if (y < margin) { page = doc.addPage([PAGE_W, PAGE_H]); y = PAGE_H - margin; }
+    page.drawText(line, { x: margin, y, size: fontSize, font, color: rgb(0.1, 0.1, 0.1) });
+    y -= lineHeight;
+  }
+  const pdfBytes = await doc.save();
+  return new File([pdfBytes], toPdfName(txtFile.name), { type: 'application/pdf' });
+}
+
+// ---- Word (.docx) ----------------------------------------------------------
+// mammoth.js converts docx → HTML in the browser; we render that HTML and
+// slice it into PDF pages. Good for text, headings, lists & inline images;
+// complex tables/exact formatting may shift slightly. Fully client-side.
+const MAMMOTH_URL = 'https://unpkg.com/mammoth@1.8.0/mammoth.browser.min.js';
+async function docxFileToPdfFile(docxFile) {
+  await loadScriptOnce(MAMMOTH_URL);
+  if (typeof mammoth === 'undefined') throw new Error('Word converter failed to load.');
+  let html;
+  try {
+    const arrayBuffer = await docxFile.arrayBuffer();
+    ({ value: html } = await mammoth.convertToHtml({ arrayBuffer }));
+  } catch (err) {
+    console.warn('mammoth failed:', err);
+    throw new Error('this Word file looks corrupted or isn’t a valid .docx (old .doc files aren’t supported — re-save as .docx)');
+  }
+  const pdfBytes = await htmlToPdfBytes(html);
+  return new File([pdfBytes], toPdfName(docxFile.name), { type: 'application/pdf' });
+}
+
+// ---- PowerPoint (.pptx) ----------------------------------------------------
+// Not yet supported in-browser with acceptable fidelity. Fail with clear,
+// actionable guidance rather than producing a broken result.
+async function pptxFileToPdfFile(pptxFile) {
+  throw new Error(
+    `PowerPoint isn't supported yet. In PowerPoint, use File → Save As / Export → PDF, ` +
+    `then drop the PDF here. (Native .pptx support is coming.)`
+  );
+}
+
+// ---- Shared HTML → PDF rasterizer (used by docx, future html sources) ------
+// Renders HTML in a hidden, Letter-width container, snapshots it with
+// html2canvas, then slices the tall canvas into Letter-sized PDF pages.
+const HTML2CANVAS_URL = 'https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js';
+async function htmlToPdfBytes(html) {
+  await loadScriptOnce(HTML2CANVAS_URL);
+  if (typeof html2canvas === 'undefined') throw new Error('Document renderer failed to load.');
+
+  // CSS width of the page content area at 96dpi (Letter = 8.5" → 816px),
+  // with ~0.75" margins baked in as padding.
+  const cssWidth = 816;
+  const host = document.createElement('div');
+  host.style.cssText =
+    `position:fixed; left:-99999px; top:0; width:${cssWidth}px; background:#fff; ` +
+    `padding:72px; box-sizing:border-box; color:#111; ` +
+    `font-family:Manrope, Arial, sans-serif; font-size:15px; line-height:1.5;`;
+  // Sensible defaults so converted docs look like documents, not raw HTML.
+  host.innerHTML =
+    `<style>
+       .vista-doc h1,.vista-doc h2,.vista-doc h3{line-height:1.25;margin:0.6em 0 0.3em;}
+       .vista-doc h1{font-size:1.8em;} .vista-doc h2{font-size:1.45em;} .vista-doc h3{font-size:1.2em;}
+       .vista-doc p{margin:0 0 0.7em;} .vista-doc ul,.vista-doc ol{margin:0 0 0.7em 1.4em;}
+       .vista-doc img{max-width:100%;height:auto;}
+       .vista-doc table{border-collapse:collapse;width:100%;margin:0 0 0.8em;}
+       .vista-doc td,.vista-doc th{border:1px solid #ccc;padding:6px 8px;vertical-align:top;}
+       .vista-doc a{color:#1d4ed8;text-decoration:underline;}
+     </style>
+     <div class="vista-doc">${html}</div>`;
+  document.body.appendChild(host);
+
+  try {
+    // Wait for any embedded images to finish loading before snapshotting.
+    await Promise.all(Array.from(host.querySelectorAll('img')).map(img =>
+      img.complete ? Promise.resolve()
+        : new Promise(res => { img.onload = img.onerror = res; })));
+
+    const scale = 2;   // crisp text; Ghostscript downsamples later if needed
+    const srcCanvas = await html2canvas(host, {
+      scale, backgroundColor: '#ffffff', useCORS: true, logging: false,
+    });
+
+    const doc = await PDFDocument.create();
+    const pxPerCss = srcCanvas.width / cssWidth;
+    const pageCssH = cssWidth * (PAGE_H / PAGE_W);        // page height in CSS px
+    const pageCanvasH = Math.round(pageCssH * pxPerCss);  // page height in canvas px
+    const totalH = srcCanvas.height;
+    const numPages = Math.max(1, Math.ceil(totalH / pageCanvasH));
+
+    for (let i = 0; i < numPages; i++) {
+      const sliceY = i * pageCanvasH;
+      const sliceH = Math.min(pageCanvasH, totalH - sliceY);
+      const tmp = document.createElement('canvas');
+      tmp.width = srcCanvas.width;
+      tmp.height = pageCanvasH;
+      const ctx = tmp.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, tmp.width, tmp.height);
+      ctx.drawImage(srcCanvas, 0, sliceY, srcCanvas.width, sliceH, 0, 0, srcCanvas.width, sliceH);
+      const png = dataUrlToBytes(tmp.toDataURL('image/png'));
+      const img = await doc.embedPng(png);
+      const page = doc.addPage([PAGE_W, PAGE_H]);
+      page.drawImage(img, { x: 0, y: 0, width: PAGE_W, height: PAGE_H });
+    }
+    return doc.save();
+  } finally {
+    document.body.removeChild(host);
+  }
 }
 
 async function insertPagesFromFiles(files, targetPageId, position) {
@@ -895,27 +1192,33 @@ async function insertPagesFromFiles(files, targetPageId, position) {
 
   showBusy('Adding pages…', 'Reading and rendering new pages.');
 
-  for (let inFile of files) {
-    const lname = inFile.name.toLowerCase();
-    const isImage =
-      inFile.type === 'image/jpeg' || inFile.type === 'image/png' ||
-      /\.(jpe?g|png)$/.test(lname);
-    const isPdf =
-      inFile.type === 'application/pdf' || lname.endsWith('.pdf');
-    if (!isPdf && !isImage) continue;
-
-    // Convert images to single-page PDFs so the rest of the pipeline is uniform
-    if (isImage) {
-      try { inFile = await imageFileToPdfFile(inFile); }
-      catch (err) { console.warn('Image wrap failed:', err); continue; }
+  const insertErrors = [];
+  for (let origFile of files) {
+    const kind = classifyFile(origFile);
+    if (kind === 'unknown') {
+      insertErrors.push(`${origFile.name} — unsupported file type`);
+      continue;
+    }
+    // Convert anything non-PDF (image/text/Word/…) so the rest of the
+    // pipeline only ever deals with PDFs.
+    let inFile = origFile;
+    if (kind !== 'pdf') {
+      showBusy(`Converting ${origFile.name}…`, `Turning your ${kindLabel(kind)} into PDF pages.`);
+      try { inFile = await anyFileToPdfFile(origFile); }
+      catch (err) {
+        console.warn('Conversion failed:', origFile.name, err);
+        insertErrors.push(`${origFile.name} — ${err.message || 'could not be converted'}`);
+        continue;
+      }
     }
 
     const fileIndex = state.files.length;
     const fileEntry = {
       id: nextId++,
       file: inFile,
-      name: inFile.name,
+      name: origFile.name,              // show the name the user recognizes
       size: inFile.size,
+      origKind: kind,
       thumbDataUrl: null,
       pageCount: null,
       color: colorForIndex(fileIndex),
@@ -962,6 +1265,10 @@ async function insertPagesFromFiles(files, targetPageId, position) {
   renderStrip();         // queue stays in sync — new files appear in REARRANGE too
   updateStepLocks();
   hideBusy();
+
+  if (insertErrors.length) {
+    showToast(`Couldn't add ${insertErrors.length}:\n• ${insertErrors.join('\n• ')}`, 'warn');
+  }
 }
 
 // ============================================================
@@ -1492,7 +1799,7 @@ function presetSubText(preset) {
 
 function buildResultName(entries) {
   if (entries.length === 1) {
-    const base = entries[0].name.replace(/\.pdf$/i, '');
+    const base = entries[0].name.replace(/\.[^.]+$/, '');   // drop any original extension
     return `${base}_compressed.pdf`;
   }
   return `vista_merged_${new Date().toISOString().slice(0,10)}.pdf`;
@@ -1818,6 +2125,28 @@ function showBusyWithProgress(text, sub, frac, metaLeft, metaRight) {
 function hideBusy() {
   busyOverlay.classList.add('hidden');
   busyProgress.classList.add('hidden');
+}
+
+// Lightweight, auto-dismissing toast for non-blocking notices (e.g. skipped or
+// failed file conversions). Multi-line messages keep their line breaks.
+let _toastTimer = null;
+function showToast(message, level = 'info') {
+  let host = document.getElementById('vistaToast');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'vistaToast';
+    host.className = 'vista-toast';
+    document.body.appendChild(host);
+  }
+  host.className = `vista-toast ${level}`;
+  host.textContent = message;
+  // force reflow so re-triggering restarts the entrance animation
+  void host.offsetWidth;
+  host.classList.add('show');
+  clearTimeout(_toastTimer);
+  const dwell = Math.min(9000, 3500 + message.length * 35);
+  _toastTimer = setTimeout(() => host.classList.remove('show'), dwell);
+  host.onclick = () => { clearTimeout(_toastTimer); host.classList.remove('show'); };
 }
 
 // ============================================================
