@@ -178,6 +178,11 @@ async function goToStage(name) {
       renderPageGrid();
     }
 
+    // Entering COMPRESSION: offer the flatten toggle if drawing sheets exist
+    if (name === 'compress') {
+      updateFlattenToggle().catch(err => console.warn('flatten detect:', err));
+    }
+
     // Update the "Keep scrolling" indicator after the stage settles
     setTimeout(() => {
       if (typeof updateScrollIndicator === 'function') updateScrollIndicator();
@@ -567,6 +572,10 @@ async function buildPagesForEdit() {
         if (entry) {
           entry.thumbDataUrl = dataUrl;
           entry.aspect = aspect;
+          // True page size in points (viewport is at 0.3 scale) — used to
+          // detect oversized drawing sheets for the flatten pass
+          entry.widthPt  = viewport.width  / 0.3;
+          entry.heightPt = viewport.height / 0.3;
           const card = pageGrid.querySelector(`[data-page-id="${entry.id}"]`);
           if (card) {
             const thumb = card.querySelector('.page-thumb');
@@ -1384,16 +1393,69 @@ document.querySelectorAll('.preset').forEach(btn => {
 processBtn.addEventListener('click', async () => {
   if (!state.files.length) return;
   try {
-    showBusy('Merging your PDFs…', 'Reading pages, stitching everything together.');
-    // If the page editor has been visited, use the curated page list; otherwise fall back to full files.
-    const mergedBytes = state.pagesBuilt
-      ? await mergePages(state.pages)
-      : await mergePdfs(state.files);
-
-    // One clean message for the whole compress phase — same look as the merge step.
-    showBusy('Compressing your PDF…', presetSubText(state.preset));
     const originalTotal = state.files.reduce((s, f) => s + f.size, 0);
-    const compressedBytes = await compressPdf(mergedBytes, state.preset);
+    const wantsFlatten = document.getElementById('flattenToggle')?.checked;
+
+    let mergedTotalBytes = 0;   // pre-compression size, for stats/Sankey
+    let compressedBytes;
+
+    // Split path: flatten oversized drawing sheets, compress text pages,
+    // reassemble in order. Falls back to the standard path on any error.
+    let flattenDone = false;
+    if (wantsFlatten && state.pagesBuilt) {
+      try {
+        await ensurePageDims();
+        const bigPages = state.pages.filter(isDrawingSheet);
+        const normalPages = state.pages.filter(p => !isDrawingSheet(p));
+        if (bigPages.length > 0) {
+          const takeBig = state.pages.map(isDrawingSheet);
+
+          showBusy('Merging your PDFs…', 'Reading pages, stitching everything together.');
+          const bigPdf = await mergePages(bigPages);
+          const normalPdf = normalPages.length ? await mergePages(normalPages) : null;
+          mergedTotalBytes = bigPdf.byteLength + (normalPdf?.byteLength || 0);
+
+          showBusy(`Flattening ${bigPages.length} drawing sheet${bigPages.length === 1 ? '' : 's'}…`,
+            'Converting oversized plans to crisp, compact images.');
+          const rasterBig = await rasterizePdf(bigPdf, FLATTEN_DPI[state.preset] || 100);
+
+          let compNormal = null;
+          if (normalPdf) {
+            showBusy('Compressing your PDF…', presetSubText(state.preset));
+            compNormal = await compressPdf(normalPdf, state.preset);
+          }
+
+          showBusy('Reassembling pages…', 'Putting everything back in your order.');
+          const flattened = await interleavePdfs(rasterBig, compNormal, takeBig);
+
+          // SAFETY NET: flattening pays off on real plan sets (3x+), but
+          // tiny/simple vector sheets can rasterize LARGER. Never ship a
+          // bigger file than the plain merge — fall back instead.
+          if (flattened.byteLength < mergedTotalBytes) {
+            compressedBytes = flattened;
+            flattenDone = true;
+          } else {
+            console.warn('Flattening grew the file — using standard compression instead.');
+          }
+        }
+      } catch (err) {
+        console.warn('Flatten path failed — falling back to standard compression:', err);
+      }
+    }
+
+    if (!flattenDone) {
+      showBusy('Merging your PDFs…', 'Reading pages, stitching everything together.');
+      // If the page editor has been visited, use the curated page list; otherwise fall back to full files.
+      const mergedBytes = state.pagesBuilt
+        ? await mergePages(state.pages)
+        : await mergePdfs(state.files);
+      mergedTotalBytes = mergedBytes.byteLength;
+
+      // One clean message for the whole compress phase — same look as the merge step.
+      showBusy('Compressing your PDF…', presetSubText(state.preset));
+      compressedBytes = await compressPdf(mergedBytes, state.preset);
+    }
+
     state.resultCompressedBytes = compressedBytes.byteLength;
     let finalBytes = compressedBytes;
 
@@ -1429,7 +1491,7 @@ processBtn.addEventListener('click', async () => {
     state.resultBlob = new Blob([finalBytes], { type: 'application/pdf' });
     state.resultName = buildResultName(state.files);
     state.resultOriginalTotal = originalTotal;
-    state.resultMergedBytes = mergedBytes.byteLength;
+    state.resultMergedBytes = mergedTotalBytes;
     state.resultFinalBytes = finalBytes.byteLength;
 
     renderResult();
@@ -1487,6 +1549,118 @@ async function mergePages(pages) {
   for (const page of pages) {
     const copied = copiedByFile.get(page.fileId)?.get(page.originalIndex);
     if (copied) merged.addPage(copied);
+  }
+  return await merged.save({ useObjectStreams: true });
+}
+
+// ============================================================
+// FLATTEN DRAWING SHEETS — selective rasterization for CAD/plan sets
+// ============================================================
+// Vector CAD sheets barely compress: their size is linework, not images,
+// so DPI downsampling does nothing (learned from a real-world 84 MB plan
+// set that compressed to only 41 MB). Flattening those sheets to lossless
+// grayscale raster shrinks them 2-3x more while keeping lines crisp —
+// and letter-size text pages stay vector, sharp, and searchable.
+
+// "Oversized" = longer side ≥ 22in or area ≥ 300in² (catches 24x36,
+// 30x42, 42x30 plan sheets; letter/legal/tabloid stay vector).
+const FLATTEN_LONG_PT = 22 * 72;
+const FLATTEN_AREA_PT2 = 300 * 72 * 72;
+
+function isDrawingSheet(page) {
+  if (!page.widthPt || !page.heightPt) return false;
+  return Math.max(page.widthPt, page.heightPt) >= FLATTEN_LONG_PT ||
+         (page.widthPt * page.heightPt) >= FLATTEN_AREA_PT2;
+}
+
+// Pages race the thumbnail pass if the user sprints through the editor —
+// backfill any missing dimensions straight from the cached pdf.js docs.
+async function ensurePageDims() {
+  for (const page of state.pages) {
+    if (page.widthPt && page.heightPt) continue;
+    try {
+      const pdf = pdfDocCache.get(page.fileId) || await getPdfDoc(page.fileId);
+      const vp = (await pdf.getPage(page.originalIndex + 1)).getViewport({ scale: 1 });
+      page.widthPt = vp.width;
+      page.heightPt = vp.height;
+    } catch (err) {
+      console.warn('Could not measure page', page.pageNum, 'of', page.fileName, err);
+    }
+  }
+}
+
+function drawingSheetCount() {
+  return state.pages.filter(isDrawingSheet).length;
+}
+
+// Show the flatten toggle on the COMPRESSION stage only when oversized
+// sheets are in the queue — auto-ON so the right thing happens by default.
+async function updateFlattenToggle() {
+  const wrap = document.getElementById('flattenToggleWrap');
+  const sub = document.getElementById('flattenSub');
+  if (!wrap) return;
+  if (!state.pagesBuilt) { wrap.classList.add('hidden'); return; }
+  await ensurePageDims();
+  const n = drawingSheetCount();
+  wrap.classList.toggle('hidden', n === 0);
+  if (n > 0 && sub) {
+    sub.innerHTML = `${n} oversized sheet${n === 1 ? '' : 's'} detected — flattening shrinks plan sets 2-3x more, lines stay crisp. Text pages stay sharp &amp; searchable.`;
+  }
+}
+
+// Raster DPI per preset — 42-inch sheets stay legible at all three
+// (measured: 109-sheet set → ~26MB / ~16MB / ~12MB respectively).
+const FLATTEN_DPI = { low: 150, recommended: 100, extreme: 80 };
+
+// Rasterize a whole PDF to 8-bit grayscale pages via Ghostscript's
+// pdfimage8 device. Output keeps Flate (lossless) image compression —
+// it beats JPEG ~3x on linework AND has no compression fuzz.
+async function rasterizePdf(bytes, dpi, onProgress) {
+  const wasmBytes = await ensureGsWasmBytes(onProgress);
+  const createGS = await ensureGsFactory();
+  const gs = await createGS({
+    instantiateWasm(imports, cb) {
+      WebAssembly.instantiate(wasmBytes, imports)
+        .then(r => cb(r.instance, r.module))
+        .catch(e => { throw new Error('WASM instantiate failed: ' + e); });
+      return {};
+    },
+  });
+  const input = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  gs.FS.writeFile('/input.pdf', input);
+  const exit = gs.callMain([
+    '-sDEVICE=pdfimage8',
+    `-r${dpi}`,
+    '-dNOPAUSE', '-dQUIET', '-dBATCH', '-dSAFER',
+    '-sOutputFile=/output.pdf',
+    '/input.pdf',
+  ]);
+  if (exit !== 0) {
+    throw new Error(`Ghostscript (flatten) exited with status ${exit}.`);
+  }
+  const output = gs.FS.readFile('/output.pdf');
+  try { gs.FS.unlink('/input.pdf'); gs.FS.unlink('/output.pdf'); } catch {}
+  return output;
+}
+
+// Stitch the flattened sheets and the compressed text pages back together
+// in the user's exact page order. takeBig[i] says which stream page i
+// comes from; both inputs preserved their internal order.
+async function interleavePdfs(bigBytes, normalBytes, takeBig) {
+  const merged = await PDFDocument.create();
+  const queues = {};
+  if (bigBytes) {
+    const doc = await PDFDocument.load(bigBytes, { ignoreEncryption: true });
+    queues.big = await merged.copyPages(doc, doc.getPageIndices());
+  }
+  if (normalBytes) {
+    const doc = await PDFDocument.load(normalBytes, { ignoreEncryption: true });
+    queues.normal = await merged.copyPages(doc, doc.getPageIndices());
+  }
+  let bi = 0, ni = 0;
+  for (const isBig of takeBig) {
+    const page = isBig ? queues.big?.[bi++] : queues.normal?.[ni++];
+    if (page) merged.addPage(page);
   }
   return await merged.save({ useObjectStreams: true });
 }

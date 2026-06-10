@@ -24,3 +24,7 @@ Thumbs.db
 
 # Stale Tesseract.js cache from Node-side tests (real one is in lib/tesseract/lang-data/)
 /eng.traineddata
+
+# One-off local fire-drill scripts (contain client file paths)
+fire_drill_*.mjs
+_testdata_tmp/
