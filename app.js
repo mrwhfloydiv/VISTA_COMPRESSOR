@@ -47,9 +47,10 @@ const $ = (id) => document.getElementById(id);
 const dropZone = $('dropZone');
 const fileInput = $('fileInput');
 const browseBtn = $('browseBtn');
-const addMoreBtn = $('addMoreBtn');
 const clearAllBtn = $('clearAllBtn');
-const fileStrip = $('fileStrip');
+const dropInner = $('dropInner');
+const boardInner = $('boardInner');
+const queueCta = $('queueCta');
 const stripTrack = $('stripTrack');
 const stripCount = $('stripCount');
 const compressionPanel = $('compressionPanel');
@@ -86,14 +87,14 @@ const busyProgressFill = $('busyProgressFill');
 const busyProgressMeta = $('busyProgressMeta');
 
 // ============================================================
-// STAGE MACHINE — DROP → REARRANGE → COMPRESS → RESULT
+// STAGE MACHINE — DROP → EDIT → COMPRESS → RESULT
 // ============================================================
 // All four stages live in the DOM at once. Only the active one is
 // display:block; transitions are CSS animations (stageIn / stageOut).
 // The step strip and grid background never change — only the stage
 // content crossfades.
 
-const STAGES = ['drop', 'rearrange', 'edit', 'compress', 'result'];
+const STAGES = ['drop', 'edit', 'compress', 'result'];
 let currentStage = 'drop';
 let stageTransition = null; // promise-of-current-transition
 
@@ -118,7 +119,6 @@ function updateStepLocks() {
   const hasResult = state.resultBlob != null;
   const map = {
     drop: false,                       // always reachable
-    rearrange: !hasFiles,              // need a queue
     edit:      !hasFiles,              // need files (pages auto-build on entry)
     compress:  !hasFiles || (state.pagesBuilt && !hasPages),  // need files; if pages built, need ≥1 page
     result:    !hasResult,             // need an actual result to view
@@ -191,9 +191,12 @@ async function goToStage(name) {
 // FILE INTAKE
 // ============================================================
 
-dropZone.addEventListener('click', () => fileInput.click());
+// Empty board: clicking anywhere opens the picker. Loaded board: only the
+// "+ Add more" tile does, so clicks on cards/buttons don't fight the picker.
+dropZone.addEventListener('click', () => {
+  if (state.files.length === 0) fileInput.click();
+});
 browseBtn.addEventListener('click', (e) => { e.stopPropagation(); fileInput.click(); });
-addMoreBtn.addEventListener('click', () => fileInput.click());
 
 fileInput.addEventListener('change', (e) => {
   ingestFiles(Array.from(e.target.files || []));
@@ -204,7 +207,8 @@ fileInput.addEventListener('change', (e) => {
   dropZone.addEventListener(ev, (e) => {
     e.preventDefault();
     e.stopPropagation();
-    dropZone.classList.add('dragover');
+    // Only light up for OS file drags — not for in-board card reordering
+    if (e.dataTransfer?.types?.includes('Files')) dropZone.classList.add('dragover');
   });
 });
 ['dragleave', 'drop'].forEach(ev => {
@@ -221,12 +225,18 @@ dropZone.addEventListener('drop', (e) => {
   ingestFiles(Array.from(e.dataTransfer?.files || []));
 });
 
-// Also let the user drop files anywhere on the page once at least one is queued
-['dragover', 'drop'].forEach(ev => {
-  document.addEventListener(ev, (e) => {
-    if (e.target.closest('.drop-zone, .file-strip')) return;
-    e.preventDefault();
-  });
+// Page-wide drop: while on the DROP stage, files dropped anywhere on the
+// page join the queue — not just inside the drop zone. On other stages we
+// still preventDefault so the browser never navigates away to the file.
+['dragenter', 'dragover'].forEach(ev => {
+  document.addEventListener(ev, (e) => { e.preventDefault(); });
+});
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  // Drops on the zone itself are handled by the dropZone listener above
+  // (it stopPropagation()s), and card-reorder drops carry no OS files.
+  const files = Array.from(e.dataTransfer?.files || []);
+  if (files.length && currentStage === 'drop') ingestFiles(files);
 });
 
 async function ingestFiles(files) {
@@ -284,9 +294,11 @@ async function ingestFiles(files) {
       added ? 'warn' : 'error'
     );
   }
-  // Advance to REARRANGE the first time files come in (or stay there)
-  if (state.files.length > 0 && currentStage === 'drop') {
-    goToStage('rearrange');
+  // Stay on the DROP stage — the board becomes the queue and the user keeps
+  // adding files until they hit START COMPRESSING.
+  if (added > 0 && queueCta) {
+    // Bring the CTA into view so the next step is always obvious
+    setTimeout(() => queueCta.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 80);
   }
 }
 
@@ -315,7 +327,36 @@ async function generateThumbnail(entry) {
 // RENDER FILE STRIP
 // ============================================================
 
+// One board, two states: empty → big drop invitation; loaded → the queue.
+function updateQueueVisibility() {
+  const hasFiles = state.files.length > 0;
+  if (dropInner)  dropInner.classList.toggle('hidden', hasFiles);
+  if (boardInner) boardInner.classList.toggle('hidden', !hasFiles);
+  if (queueCta)   queueCta.classList.toggle('hidden', !hasFiles);
+  if (dropZone)   dropZone.classList.toggle('has-queue', hasFiles);
+  updateStepLocks();
+}
+
+// Dashed "+ Add more" tile that always sits at the end of the card grid —
+// the board's built-in invitation to keep adding files.
+const addMoreTile = (() => {
+  const tile = document.createElement('button');
+  tile.type = 'button';
+  tile.className = 'add-tile';
+  tile.innerHTML = `
+    <span class="add-tile-plus">+</span>
+    <span class="add-tile-text">Add more</span>
+    <span class="add-tile-sub">click or drop files</span>
+  `;
+  tile.addEventListener('click', (e) => {
+    e.stopPropagation();
+    fileInput.click();
+  });
+  return tile;
+})();
+
 function renderStrip() {
+  updateQueueVisibility();
   stripTrack.innerHTML = '';
   state.files.forEach((entry, i) => {
     const card = document.createElement('div');
@@ -348,6 +389,9 @@ function renderStrip() {
     stripTrack.appendChild(card);
   });
 
+  // The add-more tile always closes out the grid
+  stripTrack.appendChild(addMoreTile);
+
   stripCount.textContent = state.files.length === 1 ? '1 file' : `${state.files.length} files`;
 
   stripTrack.querySelectorAll('[data-remove]').forEach(btn => {
@@ -356,9 +400,7 @@ function renderStrip() {
       const id = Number(btn.dataset.remove);
       state.files = state.files.filter(f => f.id !== id);
       state.pagesBuilt = false; state.pages = [];
-      renderStrip();
-      // If the queue is empty, slide back to DROP
-      if (state.files.length === 0) goToStage('drop');
+      renderStrip();   // hides the queue panel automatically when empty
     });
   });
 }
@@ -369,10 +411,10 @@ clearAllBtn.addEventListener('click', () => {
   state.files = [];
   state.pagesBuilt = false; state.pages = [];
   renderStrip();
-  goToStage('drop');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 });
 
-// REARRANGE → EDIT PAGES
+// DROP (queue) → EDIT PAGES
 continueToEditBtn.addEventListener('click', () => {
   if (!state.files.length) return;
   goToStage('edit');

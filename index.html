@@ -66,13 +66,11 @@
   <ol class="step-strip reveal-fade" id="stepStrip" style="--d:980ms">
     <li class="step active" data-step="drop"><span class="step-num">01</span><span class="step-name">DROP FILES</span></li>
     <li class="step-line"></li>
-    <li class="step" data-step="rearrange"><span class="step-num">02</span><span class="step-name">REARRANGE</span></li>
+    <li class="step" data-step="edit"><span class="step-num">02</span><span class="step-name">EDIT PAGES</span></li>
     <li class="step-line"></li>
-    <li class="step" data-step="edit"><span class="step-num">03</span><span class="step-name">EDIT PAGES</span></li>
+    <li class="step" data-step="compress"><span class="step-num">03</span><span class="step-name">COMPRESSION</span></li>
     <li class="step-line"></li>
-    <li class="step" data-step="compress"><span class="step-num">04</span><span class="step-name">COMPRESSION</span></li>
-    <li class="step-line"></li>
-    <li class="step" data-step="result"><span class="step-num">05</span><span class="step-name">SHIP IT</span></li>
+    <li class="step" data-step="result"><span class="step-num">04</span><span class="step-name">SHIP IT</span></li>
   </ol>
 
   <div class="stages" id="stages">
@@ -86,7 +84,8 @@
       <div class="ghost-card g2"></div>
       <div class="ghost-card g3"></div>
     </div>
-    <div class="drop-inner">
+    <!-- EMPTY STATE — big inviting drop target -->
+    <div class="drop-inner" id="dropInner">
       <div class="drop-icon">
         <svg width="56" height="56" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M32 8 L32 40"/>
@@ -98,24 +97,23 @@
       <div class="drop-subline">or <button type="button" class="link-button" id="browseBtn">browse your files</button></div>
       <div class="drop-hint">PDF · Word · images · text — mix &amp; match</div>
     </div>
-  </div>
-  </section>
 
-  <section class="stage" data-stage="rearrange">
-  <div id="fileStrip" class="file-strip">
-    <div class="strip-header">
-      <h2 class="strip-title">Your <em>queue</em><span class="title-period">.</span> <span class="strip-count" id="stripCount">0 files</span></h2>
-      <div class="strip-actions">
-        <button type="button" class="text-button" id="addMoreBtn">+ Add more</button>
-        <button type="button" class="text-button danger" id="clearAllBtn">Clear all</button>
+    <!-- LOADED STATE — the same board becomes your queue -->
+    <div class="board-inner hidden" id="boardInner">
+      <div class="strip-header">
+        <h2 class="strip-title">Your <em>queue</em><span class="title-period">.</span> <span class="strip-count" id="stripCount">0 files</span></h2>
+        <div class="strip-actions">
+          <button type="button" class="text-button danger" id="clearAllBtn">Clear all</button>
+        </div>
       </div>
+      <div class="strip-hint">Drag to reorder · × to remove · drop more files anytime</div>
+      <div class="strip-track" id="stripTrack"></div>
     </div>
-    <div class="strip-hint">Drag to reorder · Click × to remove</div>
-    <div class="strip-track" id="stripTrack"></div>
   </div>
-  <div class="stage-action">
+
+  <div class="stage-action hidden" id="queueCta">
     <button type="button" class="cta-button" id="continueToEditBtn">
-      <span class="cta-label">EDIT PAGES</span>
+      <span class="cta-label">START COMPRESSING</span>
       <span class="cta-arrow">→</span>
     </button>
   </div>
