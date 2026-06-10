@@ -1455,22 +1455,38 @@ async function mergePdfs(entries) {
 }
 
 // Merge a curated list of pages (from the editor) into one PDF.
-// Loads each source file once, then copies only the selected pages
-// in the order the editor set.
+// Loads each source file once and copies ALL of its selected pages in a
+// single copyPages() call — pdf-lib dedupes shared resources (fonts,
+// images) only within one call, so per-page copying duplicated them for
+// every page and bloated CAD/drawing PDFs by 4-5x. Pages are then placed
+// in the exact order the editor set, including interleaving across files.
 async function mergePages(pages) {
   const merged = await PDFDocument.create();
-  const docCache = new Map();
+
+  // Group the wanted page indices by source file (preserving dedup keys)
+  const byFile = new Map();   // fileId → [originalIndex, …]
   for (const page of pages) {
-    let src = docCache.get(page.fileId);
-    if (!src) {
-      const file = state.files.find(f => f.id === page.fileId);
-      if (!file) continue;
-      const bytes = await file.file.arrayBuffer();
-      src = await PDFDocument.load(bytes, { ignoreEncryption: true });
-      docCache.set(page.fileId, src);
-    }
-    const [copied] = await merged.copyPages(src, [page.originalIndex]);
-    merged.addPage(copied);
+    if (!byFile.has(page.fileId)) byFile.set(page.fileId, []);
+    byFile.get(page.fileId).push(page.originalIndex);
+  }
+
+  // One load + one batched copy per source document
+  const copiedByFile = new Map();  // fileId → Map(originalIndex → copied page)
+  for (const [fileId, indices] of byFile) {
+    const file = state.files.find(f => f.id === fileId);
+    if (!file) continue;
+    const bytes = await file.file.arrayBuffer();
+    const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
+    const copied = await merged.copyPages(src, indices);
+    const lookup = new Map();
+    indices.forEach((origIdx, i) => lookup.set(origIdx, copied[i]));
+    copiedByFile.set(fileId, lookup);
+  }
+
+  // Lay the pages down in the editor's arrangement
+  for (const page of pages) {
+    const copied = copiedByFile.get(page.fileId)?.get(page.originalIndex);
+    if (copied) merged.addPage(copied);
   }
   return await merged.save({ useObjectStreams: true });
 }
